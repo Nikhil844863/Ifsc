@@ -1,83 +1,79 @@
-import logging
 import requests
 from telegram import Update
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackContext
+from telegram.ext import Application, CommandHandler, ContextTypes
+import json
 
-# Replace with your bot's API token
-TELEGRAM_TOKEN = '7925346721:AAEnajZtvFfZlck5HNdM_Xwiy_ELqC8SktI'
-API_TOKEN = '6645|8aUVZm0wEaovDsq0CTYaCxYmAm925i5wg8U9OV5j'  # API Token for Zyla Labs
-API_URL = 'https://zylalabs.com/api/418/ifsc+code+validator+api/324/isfc+validator'
+# --- YOUR TELEGRAM CHANNEL USERNAME ---
+CHANNEL_USERNAME = "@RtoVehicle"  # Change this to your actual channel username
 
-# Set up logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-# Send message function
-async def send_message(update: Update, text: str):
+# Function to check if user is a member of the channel
+async def is_member(user_id, bot):
     try:
-        # Use update.message.chat.id to send the message
-        response = await update.message.reply_text(text)
-        logger.info(f"Sent message to {update.message.chat.id}: {text}")
-    except Exception as e:
-        logger.error(f"Error sending message: {e}")
+        chat_member = await bot.get_chat_member(CHANNEL_USERNAME, user_id)
+        return chat_member.status in ["member", "administrator", "creator"]
+    except:
+        return False
 
-# Function to handle '/start' command
-async def start(update: Update, context: CallbackContext) -> None:
-    user = update.message.from_user
-    logger.info(f"User {user.id} started the bot")
-    await update.message.reply_text('👋 Hi! Send me an IFSC code and I will validate it. ✨')
+# Function to fetch vehicle details from API
+def get_vehicle_details(registration_number):
+    url = f"https://codex-ml.tech/api/rc.php?regno={registration_number}"
+    response = requests.get(url)
+    try:
+        data = response.json()
+        if data.get("data") and data["data"].get("detail"):
+            return data["data"]["detail"]
+        else:
+            return None
+    except json.JSONDecodeError:
+        return None
 
-# Function to handle incoming messages
-async def validate_ifsc(update: Update, context: CallbackContext) -> None:
-    ifsc_code = update.message.text.strip()
-    
-    if not ifsc_code:
-        await update.message.reply_text('⚠️ Please enter a valid IFSC code.')
+# Start command handler
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        f"Welcome to Vehicle Info Bot! 🚗\n\n"
+        f"To use this bot, you must first join our channel: {CHANNEL_USERNAME}\n"
+        f"Then use /getdetails <REGISTRATION_NUMBER> to fetch vehicle details."
+    )
+
+# Get details command handler
+async def getdetails(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+    bot = context.bot
+
+    # Check if the user is a member
+    if not await is_member(user_id, bot):
+        await update.message.reply_text(
+            f"❌ You must join our channel first to use this bot!\nJoin here: {CHANNEL_USERNAME}"
+        )
         return
 
-    headers = {
-        'Authorization': f'Bearer {API_TOKEN}'
-    }
-    data = {'ifsc': ifsc_code}
+    if len(context.args) == 0:
+        await update.message.reply_text("Please provide a registration number. Example: /getdetails JH05BP9450")
+        return
 
-    try:
-        response = requests.post(API_URL, headers=headers, json=data)
-        response_data = response.json()
+    registration_number = context.args[0]
+    details = get_vehicle_details(registration_number)
 
-        if response.status_code == 200:
-            if response_data.get('data') == False:
-                await send_message(update, "❌ The IFSC code is invalid.")
-            else:
-                bank_info = response_data['data']
-                message = (
-                    f"✅ **The IFSC code is valid!**\n\n"
-                    f"🏦 **Bank:** {bank_info['bank']}\n"
-                    f"🏢 **Branch:** {bank_info['branch']}\n"
-                    f"📍 **Address:** {bank_info['address']}\n"
-                    f"🌆 **City:** {bank_info['city']}\n"
-                    f"🏙️ **State:** {bank_info['state']}\n"
-                    f"📞 **Phone:** {bank_info['phone']}\n"
-                    f"🔢 **IFSC Code:** {bank_info['ifsc']}\n"
-                )
-                await send_message(update, message)
-        else:
-            await send_message(update, '⚠️ Error: Could not validate the IFSC code.')
-    except Exception as e:
-        logger.error(f"Error occurred: {e}")
-        await send_message(update, "❗ An error occurred while processing the request.")
+    if details:
+        message = json.dumps(details, indent=4)
+        await update.message.reply_text(f"Vehicle Details:\n```{message}```", parse_mode="Markdown")
+    else:
+        await update.message.reply_text("❌ Vehicle details not found. Please check the registration number.")
 
-# Main function to start the bot
+# Main function to run the bot
 def main():
-    application = Application.builder().token(TELEGRAM_TOKEN).build()
+    application = Application.builder().token("7616068751:AAEEz9SEDfZBHdrBjNN7GI00eiXVj-EBuOM").build()
 
-    # Command handler for /start
     application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("getdetails", getdetails))
 
-    # Message handler for IFSC code
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, validate_ifsc))
+    import asyncio
+    try:
+        asyncio.get_event_loop().run_until_complete(application.run_polling())
+    except RuntimeError:
+        import nest_asyncio
+        nest_asyncio.apply()
+        asyncio.run(application.run_polling())
 
-    # Run the bot
-    application.run_polling()
-
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
